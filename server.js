@@ -47,3 +47,55 @@ wss.on("connection", (ws) => {
 server.listen(process.env.PORT || 10000, () => {
     console.log("✅ SERVER COMPLETO ATTIVO");
 });
+// =====================
+// ✅ REGISTER
+// =====================
+app.post("/register", async (req, res) => {
+
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+        return res.json({ error: "Dati mancanti" });
+    }
+
+    const existing = await db.collection("users").findOne({ username });
+
+    if (existing) {
+        return res.json({ error: "Utente esiste" });
+    }
+
+    const user = {
+        username,
+        password,
+        createdAt: Date.now()
+    };
+
+    const result = await db.collection("users").insertOne(user);
+
+    res.json({
+        userId: result.insertedId,
+        username
+    });
+});
+
+// =====================
+// ✅ LOGIN
+// =====================
+app.post("/login", async (req, res) => {
+
+    const { username, password } = req.body;
+
+    const user = await db.collection("users").findOne({
+        username,
+        password
+    });
+
+    if (!user) {
+        return res.json({ error: "Credenziali errate" });
+    }
+
+    res.json({
+        userId: user._id,
+        username: user.username
+    });
+});
