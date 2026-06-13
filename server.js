@@ -16,6 +16,11 @@ const wss = new WebSocket.Server({ server });
 
 let db;
 
+// ✅ TEST HTTP (serve per Render)
+app.get("/", (req, res) => {
+    res.send("Server attivo ✅");
+});
+
 // ✅ DEBUG
 console.log("MONGO URI:", process.env.MONGO_URI ? "PRESENTE ✅" : "MANCANTE ❌");
 
@@ -29,33 +34,16 @@ MongoClient.connect(process.env.MONGO_URI)
         console.log("❌ ERRORE MONGO:", err.message);
     });
 
-// ✅ TEST ROUTE (serve per Render)
-app.get("/", (req, res) => {
-    res.send("Server attivo ✅");
-});
-
-// =================
-// ✅ WEBSOCKET BASE
-// =================
-
+// ✅ WS BASE (solo test)
 wss.on("connection", (ws) => {
 
-    ws.on("message", (message) => {
-        try {
-            const data = JSON.parse(message.toString());
-
-            if (data.type === "PING") {
-                ws.send(JSON.stringify({ type: "PONG" }));
-            }
-
-        } catch (err) {
-            console.log("Errore WS:", err.message);
-        }
+    ws.on("message", (msg) => {
+        console.log("Messaggio ricevuto:", msg.toString());
     });
 
 });
 
-// ✅ AVVIO SERVER
+// ✅ AVVIO
 server.listen(process.env.PORT || 10000, () => {
     console.log("✅ SERVER COMPLETO ATTIVO");
 });
