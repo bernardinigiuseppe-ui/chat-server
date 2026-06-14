@@ -16,15 +16,17 @@ const wss = new WebSocket.Server({ server });
 
 let db;
 
-// ✅ TEST HTTP (serve per Render)
+// ==========================
+// ✅ TEST HTTP (Render)
 app.get("/", (req, res) => {
     res.send("Server attivo ✅");
 });
+// ==========================
 
-// ✅ DEBUG
+// ==========================
+// ✅ CONNECT MONGO
 console.log("MONGO URI:", process.env.MONGO_URI ? "PRESENTE ✅" : "MANCANTE ❌");
 
-// ✅ CONNESSIONE MONGO
 MongoClient.connect(process.env.MONGO_URI)
     .then(client => {
         db = client.db();
@@ -33,40 +35,26 @@ MongoClient.connect(process.env.MONGO_URI)
     .catch(err => {
         console.log("❌ ERRORE MONGO:", err.message);
     });
+// ==========================
 
-// ✅ WS BASE (solo test)
-wss.on("connection", (ws) => {
+// ==========================
+// ✅ CREA UTENTE (nickname)
+app.post("/create-user", async (req, res) => {
 
-    ws.on("message", (msg) => {
-        console.log("Messaggio ricevuto:", msg.toString());
-    });
+    const { username } = req.body;
 
-});
-
-// ✅ AVVIO
-server.listen(process.env.PORT || 10000, () => {
-    console.log("✅ SERVER COMPLETO ATTIVO");
-});
-// =====================
-// ✅ REGISTER
-// =====================
-app.post("/register", async (req, res) => {
-
-    const { username, password } = req.body;
-
-    if (!username || !password) {
-        return res.json({ error: "Dati mancanti" });
+    if (!username) {
+        return res.json({ error: "Username obbligatorio" });
     }
 
     const existing = await db.collection("users").findOne({ username });
 
     if (existing) {
-        return res.json({ error: "Utente esiste" });
+        return res.json({ error: "Username già esistente" });
     }
 
     const user = {
         username,
-        password,
         createdAt: Date.now()
     };
 
@@ -77,25 +65,76 @@ app.post("/register", async (req, res) => {
         username
     });
 });
+// ==========================
 
-// =====================
-// ✅ LOGIN
-// =====================
-app.post("/login", async (req, res) => {
+// ==========================
+// ✅ OTTIENI TUTTI GLI UTENTI
+app.get("/users", async (req, res) => {
 
-    const { username, password } = req.body;
+    const users = await db.collection("users")
+        .find({})
+        .toArray();
 
-    const user = await db.collection("users").findOne({
-        username,
-        password
+    res.json(users.map(u => ({
+        userId: u._id.toString(),
+        username: u.username
+    })));
+});
+// ==========================
+
+// ==========================
+// ✅ WEBSOCKET (CHAT)
+const rooms = {};
+
+wss.on("connection", (ws) => {
+
+    ws.on("message", async (message) => {
+
+        try {
+            const data = JSON.parse(message.toString());
+
+            // ✅ JOIN ROOM
+            if (data.type === "JOIN") {
+
+                ws.room = data.room;
+
+                if (!rooms[data.room]) {
+                    rooms[data.room] = new Set();
+                }
+
+                rooms[data.room].add(ws);
+            }
+
+            // ✅ MESSAGE
+            if (data.type === "MESSAGE") {
+
+                if (!rooms[data.room]) return;
+
+                rooms[data.room].forEach(client => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({
+                            type: "MESSAGE",
+                            msg: data.msg,
+                            senderId: data.senderId
+                        }));
+                    }
+                });
+            }
+
+        } catch (err) {
+            console.log("Errore WS:", err.message);
+        }
     });
 
-    if (!user) {
-        return res.json({ error: "Credenziali errate" });
-    }
-
-    res.json({
-        userId: user._id,
-        username: user.username
+    ws.on("close", () => {
+        if (ws.room && rooms[ws.room]) {
+            rooms[ws.room].delete(ws);
+        }
     });
+});
+// ==========================
+
+// ✅ AVVIO SERVER
+server.listen(process.env.PORT || 10000, () => {
+    console.log("✅ SERVER COMPLETO ATTIVO");
 });
