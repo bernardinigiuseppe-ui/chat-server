@@ -17,59 +17,72 @@ const wss = new WebSocket.Server({ server });
 let db;
 
 // ==========================
-// ✅ TEST ROUTE (Render)
+// ✅ CONNECT MONGO (BLOCCANTE)
+async function startServer() {
+    try {
+        const client = await MongoClient.connect(process.env.MONGO_URI);
+        db = client.db();
+        console.log("✅ MongoDB connesso");
+
+        // ✅ SERVER PARTE SOLO DOPO MONGO
+        server.listen(process.env.PORT || 10000, () => {
+            console.log("✅ SERVER COMPLETO ATTIVO");
+        });
+
+    } catch (err) {
+        console.log("❌ ERRORE MONGO:", err.message);
+    }
+}
+
+startServer();
+
+// ==========================
+// ✅ TEST ROUTE
 app.get("/", (req, res) => {
     res.send("Server attivo ✅");
 });
-// ==========================
 
 // ==========================
-// ✅ MONGO CONNECT
-console.log("MONGO URI:", process.env.MONGO_URI ? "PRESENTE ✅" : "MANCANTE ❌");
-
-MongoClient.connect(process.env.MONGO_URI)
-    .then(client => {
-        db = client.db();
-        console.log("✅ MongoDB connesso");
-    })
-    .catch(err => {
-        console.log("❌ ERRORE MONGO:", err.message);
-    });
-// ==========================
-
-// ==========================
-// ✅ CREA UTENTE (nickname)
+// ✅ CREA UTENTE (FIXATO)
 app.post("/create-user", async (req, res) => {
 
-    const { username } = req.body;
+    try {
 
-    if (!username) {
-        return res.json({ error: "Username obbligatorio" });
+        const { username } = req.body;
+
+        if (!username) {
+            return res.json({ error: "Username obbligatorio" });
+        }
+
+        const existing = await db.collection("users").findOne({ username });
+
+        if (existing) {
+            return res.json({ error: "Username già esistente" });
+        }
+
+        const user = {
+            username,
+            createdAt: Date.now(),
+            contacts: []
+        };
+
+        const result = await db.collection("users").insertOne(user);
+
+        console.log("✅ UTENTE CREATO:", username);
+
+        res.json({
+            userId: result.insertedId.toString(),
+            username
+        });
+
+    } catch (err) {
+        console.log("❌ ERRORE CREATE USER:", err.message);
+        res.json({ error: "Errore server" });
     }
-
-    const existing = await db.collection("users").findOne({ username });
-
-    if (existing) {
-        return res.json({ error: "Username già esistente" });
-    }
-
-    const user = {
-        username,
-        createdAt: Date.now(),
-        contacts: []
-    };
-
-    const result = await db.collection("users").insertOne(user);
-
-    res.json({
-        userId: result.insertedId.toString(),
-        username
-    });
 });
-// ==========================
 
 // ==========================
-// ✅ OTTIENI TUTTI GLI UTENTI (debug)
+// ✅ GET USERS (DEBUG)
 app.get("/users", async (req, res) => {
 
     const users = await db.collection("users").find({}).toArray();
@@ -79,35 +92,44 @@ app.get("/users", async (req, res) => {
         username: u.username
     })));
 });
-// ==========================
 
 // ==========================
-// ✅ AGGIUNGI CONTATTO
+// ✅ ADD CONTACT (FIXATO)
 app.post("/add-contact", async (req, res) => {
 
-    const { userId, username } = req.body;
+    try {
 
-    if (!userId || !username) {
-        return res.json({ error: "Dati mancanti" });
+        const { userId, username } = req.body;
+
+        const contact = await db.collection("users").findOne({ username });
+
+        if (!contact) {
+            return res.json({ error: "Utente non trovato" });
+        }
+
+        if (contact._id.toString() === userId) {
+            return res.json({ error: "Non puoi aggiungere te stesso" });
+        }
+
+        const result = await db.collection("users").updateOne(
+            { _id: new ObjectId(userId) },
+            { $addToSet: { contacts: contact._id.toString() } }
+        );
+
+        if (result.modifiedCount === 0) {
+            return res.json({ error: "Contatto già presente" });
+        }
+
+        res.json({ success: true });
+
+    } catch (err) {
+        console.log("❌ ERRORE ADD CONTACT:", err.message);
+        res.json({ error: "Errore server" });
     }
-
-    const contact = await db.collection("users").findOne({ username });
-
-    if (!contact) {
-        return res.json({ error: "Utente non trovato" });
-    }
-
-    await db.collection("users").updateOne(
-        { _id: new ObjectId(userId) },
-        { $addToSet: { contacts: contact._id.toString() } }
-    );
-
-    res.json({ success: true });
 });
-// ==========================
 
 // ==========================
-// ✅ OTTIENI CONTATTI
+// ✅ GET CONTACTS
 app.get("/contacts/:userId", async (req, res) => {
 
     const userId = req.params.userId;
@@ -116,7 +138,7 @@ app.get("/contacts/:userId", async (req, res) => {
         _id: new ObjectId(userId)
     });
 
-    if (!user || !user.contacts || user.contacts.length === 0) {
+    if (!user || !user.contacts) {
         return res.json([]);
     }
 
@@ -131,23 +153,21 @@ app.get("/contacts/:userId", async (req, res) => {
         username: u.username
     })));
 });
-// ==========================
 
 // ==========================
-// ✅ WEBSOCKET CHAT
+// ✅ WEBSOCKET
 const rooms = {};
 
 wss.on("connection", (ws) => {
 
-    ws.on("message", async (message) => {
+    ws.on("message", (message) => {
 
         try {
             const data = JSON.parse(message.toString());
 
-            // ✅ CREA ROOM PRIVATA (ordine consistente)
-            if (data.type === "JOIN") {
+            const roomId = [data.userId, data.otherUserId].sort().join("_");
 
-                const roomId = [data.userId, data.otherUserId].sort().join("_");
+            if (data.type === "JOIN") {
 
                 ws.room = roomId;
 
@@ -158,10 +178,7 @@ wss.on("connection", (ws) => {
                 rooms[roomId].add(ws);
             }
 
-            // ✅ INVIO MESSAGGI
             if (data.type === "MESSAGE") {
-
-                const roomId = [data.userId, data.otherUserId].sort().join("_");
 
                 if (!rooms[roomId]) return;
 
@@ -186,10 +203,4 @@ wss.on("connection", (ws) => {
             rooms[ws.room].delete(ws);
         }
     });
-});
-// ==========================
-
-// ✅ START SERVER
-server.listen(process.env.PORT || 10000, () => {
-    console.log("✅ SERVER COMPLETO ATTIVO");
 });
