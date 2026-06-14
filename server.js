@@ -5,7 +5,7 @@ const http = require("http");
 const WebSocket = require("ws");
 const cors = require("cors");
 const bodyParser = require("body-parser");
-const { MongoClient } = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
 
 const app = express();
 app.use(cors());
@@ -17,14 +17,14 @@ const wss = new WebSocket.Server({ server });
 let db;
 
 // ==========================
-// ✅ TEST HTTP (Render)
+// ✅ TEST ROUTE (Render)
 app.get("/", (req, res) => {
     res.send("Server attivo ✅");
 });
 // ==========================
 
 // ==========================
-// ✅ CONNECT MONGO
+// ✅ MONGO CONNECT
 console.log("MONGO URI:", process.env.MONGO_URI ? "PRESENTE ✅" : "MANCANTE ❌");
 
 MongoClient.connect(process.env.MONGO_URI)
@@ -55,25 +55,24 @@ app.post("/create-user", async (req, res) => {
 
     const user = {
         username,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        contacts: []
     };
 
     const result = await db.collection("users").insertOne(user);
 
     res.json({
-        userId: result.insertedId,
+        userId: result.insertedId.toString(),
         username
     });
 });
 // ==========================
 
 // ==========================
-// ✅ OTTIENI TUTTI GLI UTENTI
+// ✅ OTTIENI TUTTI GLI UTENTI (debug)
 app.get("/users", async (req, res) => {
 
-    const users = await db.collection("users")
-        .find({})
-        .toArray();
+    const users = await db.collection("users").find({}).toArray();
 
     res.json(users.map(u => ({
         userId: u._id.toString(),
@@ -83,7 +82,59 @@ app.get("/users", async (req, res) => {
 // ==========================
 
 // ==========================
-// ✅ WEBSOCKET (CHAT)
+// ✅ AGGIUNGI CONTATTO
+app.post("/add-contact", async (req, res) => {
+
+    const { userId, username } = req.body;
+
+    if (!userId || !username) {
+        return res.json({ error: "Dati mancanti" });
+    }
+
+    const contact = await db.collection("users").findOne({ username });
+
+    if (!contact) {
+        return res.json({ error: "Utente non trovato" });
+    }
+
+    await db.collection("users").updateOne(
+        { _id: new ObjectId(userId) },
+        { $addToSet: { contacts: contact._id.toString() } }
+    );
+
+    res.json({ success: true });
+});
+// ==========================
+
+// ==========================
+// ✅ OTTIENI CONTATTI
+app.get("/contacts/:userId", async (req, res) => {
+
+    const userId = req.params.userId;
+
+    const user = await db.collection("users").findOne({
+        _id: new ObjectId(userId)
+    });
+
+    if (!user || !user.contacts || user.contacts.length === 0) {
+        return res.json([]);
+    }
+
+    const contacts = await db.collection("users")
+        .find({
+            _id: { $in: user.contacts.map(id => new ObjectId(id)) }
+        })
+        .toArray();
+
+    res.json(contacts.map(u => ({
+        userId: u._id.toString(),
+        username: u.username
+    })));
+});
+// ==========================
+
+// ==========================
+// ✅ WEBSOCKET CHAT
 const rooms = {};
 
 wss.on("connection", (ws) => {
@@ -93,29 +144,33 @@ wss.on("connection", (ws) => {
         try {
             const data = JSON.parse(message.toString());
 
-            // ✅ JOIN ROOM
+            // ✅ CREA ROOM PRIVATA (ordine consistente)
             if (data.type === "JOIN") {
 
-                ws.room = data.room;
+                const roomId = [data.userId, data.otherUserId].sort().join("_");
 
-                if (!rooms[data.room]) {
-                    rooms[data.room] = new Set();
+                ws.room = roomId;
+
+                if (!rooms[roomId]) {
+                    rooms[roomId] = new Set();
                 }
 
-                rooms[data.room].add(ws);
+                rooms[roomId].add(ws);
             }
 
-            // ✅ MESSAGE
+            // ✅ INVIO MESSAGGI
             if (data.type === "MESSAGE") {
 
-                if (!rooms[data.room]) return;
+                const roomId = [data.userId, data.otherUserId].sort().join("_");
 
-                rooms[data.room].forEach(client => {
+                if (!rooms[roomId]) return;
+
+                rooms[roomId].forEach(client => {
                     if (client.readyState === WebSocket.OPEN) {
                         client.send(JSON.stringify({
                             type: "MESSAGE",
                             msg: data.msg,
-                            senderId: data.senderId
+                            senderId: data.userId
                         }));
                     }
                 });
@@ -134,7 +189,7 @@ wss.on("connection", (ws) => {
 });
 // ==========================
 
-// ✅ AVVIO SERVER
+// ✅ START SERVER
 server.listen(process.env.PORT || 10000, () => {
     console.log("✅ SERVER COMPLETO ATTIVO");
 });
