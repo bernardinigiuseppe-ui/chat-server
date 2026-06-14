@@ -17,16 +17,15 @@ const wss = new WebSocket.Server({ server });
 let db;
 
 // ==========================
-// ✅ CONNECT MONGO (BLOCCANTE)
+// ✅ AVVIO SERVER SOLO DOPO MONGO
 async function startServer() {
     try {
         const client = await MongoClient.connect(process.env.MONGO_URI);
         db = client.db();
         console.log("✅ MongoDB connesso");
 
-        // ✅ SERVER PARTE SOLO DOPO MONGO
         server.listen(process.env.PORT || 10000, () => {
-            console.log("✅ SERVER COMPLETO ATTIVO");
+            console.log("✅ SERVER ATTIVO");
         });
 
     } catch (err) {
@@ -37,13 +36,13 @@ async function startServer() {
 startServer();
 
 // ==========================
-// ✅ TEST ROUTE
+// ✅ TEST
 app.get("/", (req, res) => {
     res.send("Server attivo ✅");
 });
 
 // ==========================
-// ✅ CREA UTENTE (FIXATO)
+// ✅ CREA UTENTE
 app.post("/create-user", async (req, res) => {
 
     try {
@@ -76,13 +75,44 @@ app.post("/create-user", async (req, res) => {
         });
 
     } catch (err) {
-        console.log("❌ ERRORE CREATE USER:", err.message);
+        console.log("❌ ERRORE CREATE:", err.message);
         res.json({ error: "Errore server" });
     }
 });
 
 // ==========================
-// ✅ GET USERS (DEBUG)
+// ✅ LOGIN UTENTE (IMPORTANTISSIMA)
+app.post("/login", async (req, res) => {
+
+    try {
+
+        const { username } = req.body;
+
+        if (!username) {
+            return res.json({ error: "Username mancante" });
+        }
+
+        const user = await db.collection("users").findOne({ username });
+
+        if (!user) {
+            return res.json({ error: "Utente non trovato" });
+        }
+
+        console.log("✅ LOGIN:", username);
+
+        res.json({
+            userId: user._id.toString(),
+            username: user.username
+        });
+
+    } catch (err) {
+        console.log("❌ ERRORE LOGIN:", err.message);
+        res.json({ error: "Errore server" });
+    }
+});
+
+// ==========================
+// ✅ LISTA UTENTI (debug)
 app.get("/users", async (req, res) => {
 
     const users = await db.collection("users").find({}).toArray();
@@ -94,12 +124,16 @@ app.get("/users", async (req, res) => {
 });
 
 // ==========================
-// ✅ ADD CONTACT (FIXATO)
+// ✅ AGGIUNGI CONTATTO
 app.post("/add-contact", async (req, res) => {
 
     try {
 
         const { userId, username } = req.body;
+
+        if (!userId || !username) {
+            return res.json({ error: "Dati mancanti" });
+        }
 
         const contact = await db.collection("users").findOne({ username });
 
@@ -129,7 +163,7 @@ app.post("/add-contact", async (req, res) => {
 });
 
 // ==========================
-// ✅ GET CONTACTS
+// ✅ LISTA CONTATTI
 app.get("/contacts/:userId", async (req, res) => {
 
     const userId = req.params.userId;
@@ -138,7 +172,7 @@ app.get("/contacts/:userId", async (req, res) => {
         _id: new ObjectId(userId)
     });
 
-    if (!user || !user.contacts) {
+    if (!user || !user.contacts || user.contacts.length === 0) {
         return res.json([]);
     }
 
@@ -155,7 +189,7 @@ app.get("/contacts/:userId", async (req, res) => {
 });
 
 // ==========================
-// ✅ WEBSOCKET
+// ✅ CHAT WEBSOCKET (PRIVATE)
 const rooms = {};
 
 wss.on("connection", (ws) => {
@@ -167,6 +201,7 @@ wss.on("connection", (ws) => {
 
             const roomId = [data.userId, data.otherUserId].sort().join("_");
 
+            // ✅ JOIN
             if (data.type === "JOIN") {
 
                 ws.room = roomId;
@@ -178,6 +213,7 @@ wss.on("connection", (ws) => {
                 rooms[roomId].add(ws);
             }
 
+            // ✅ MESSAGGI
             if (data.type === "MESSAGE") {
 
                 if (!rooms[roomId]) return;
@@ -194,7 +230,7 @@ wss.on("connection", (ws) => {
             }
 
         } catch (err) {
-            console.log("Errore WS:", err.message);
+            console.log("❌ ERRORE WS:", err.message);
         }
     });
 
