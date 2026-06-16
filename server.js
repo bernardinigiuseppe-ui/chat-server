@@ -1,5 +1,4 @@
 require("dotenv").config();
-
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
@@ -17,7 +16,7 @@ const wss = new WebSocket.Server({ server });
 let db;
 
 // ==========================
-// ✅ AVVIO SERVER SOLO DOPO MONGO
+// ✅ AVVIO SERVER
 async function startServer() {
     try {
         const client = await MongoClient.connect(process.env.MONGO_URI);
@@ -32,7 +31,6 @@ async function startServer() {
         console.log("❌ ERRORE MONGO:", err.message);
     }
 }
-
 startServer();
 
 // ==========================
@@ -42,144 +40,76 @@ app.get("/", (req, res) => {
 });
 
 // ==========================
-// ✅ CREA UTENTE
+// ✅ CREATE USER
 app.post("/create-user", async (req, res) => {
+    const { username } = req.body;
 
-    try {
+    const existing = await db.collection("users").findOne({ username });
+    if (existing) return res.json({ error: "Username già esistente" });
 
-        const { username } = req.body;
-
-        if (!username) {
-            return res.json({ error: "Username obbligatorio" });
-        }
-
-        const existing = await db.collection("users").findOne({ username });
-
-        if (existing) {
-            return res.json({ error: "Username già esistente" });
-        }
-
-        const user = {
-            username,
-            createdAt: Date.now(),
-            contacts: []
-        };
-
-        const result = await db.collection("users").insertOne(user);
-
-        console.log("✅ UTENTE CREATO:", username);
-
-        res.json({
-            userId: result.insertedId.toString(),
-            username
-        });
-
-    } catch (err) {
-        console.log("❌ ERRORE CREATE:", err.message);
-        res.json({ error: "Errore server" });
-    }
-});
-
-// ==========================
-// ✅ LOGIN UTENTE (IMPORTANTISSIMA)
-app.post("/login", async (req, res) => {
-
-    try {
-
-        const { username } = req.body;
-
-        if (!username) {
-            return res.json({ error: "Username mancante" });
-        }
-
-        const user = await db.collection("users").findOne({ username });
-
-        if (!user) {
-            return res.json({ error: "Utente non trovato" });
-        }
-
-        console.log("✅ LOGIN:", username);
-
-        res.json({
-            userId: user._id.toString(),
-            username: user.username
-        });
-
-    } catch (err) {
-        console.log("❌ ERRORE LOGIN:", err.message);
-        res.json({ error: "Errore server" });
-    }
-});
-
-// ==========================
-// ✅ LISTA UTENTI (debug)
-app.get("/users", async (req, res) => {
-
-    const users = await db.collection("users").find({}).toArray();
-
-    res.json(users.map(u => ({
-        userId: u._id.toString(),
-        username: u.username
-    })));
-});
-
-// ==========================
-// ✅ AGGIUNGI CONTATTO
-app.post("/add-contact", async (req, res) => {
-
-    try {
-
-        const { userId, username } = req.body;
-
-        if (!userId || !username) {
-            return res.json({ error: "Dati mancanti" });
-        }
-
-        const contact = await db.collection("users").findOne({ username });
-
-        if (!contact) {
-            return res.json({ error: "Utente non trovato" });
-        }
-
-        if (contact._id.toString() === userId) {
-            return res.json({ error: "Non puoi aggiungere te stesso" });
-        }
-
-        const result = await db.collection("users").updateOne(
-            { _id: new ObjectId(userId) },
-            { $addToSet: { contacts: contact._id.toString() } }
-        );
-
-        if (result.modifiedCount === 0) {
-            return res.json({ error: "Contatto già presente" });
-        }
-
-        res.json({ success: true });
-
-    } catch (err) {
-        console.log("❌ ERRORE ADD CONTACT:", err.message);
-        res.json({ error: "Errore server" });
-    }
-});
-
-// ==========================
-// ✅ LISTA CONTATTI
-app.get("/contacts/:userId", async (req, res) => {
-
-    const userId = req.params.userId;
-
-    const user = await db.collection("users").findOne({
-        _id: new ObjectId(userId)
+    const result = await db.collection("users").insertOne({
+        username,
+        createdAt: Date.now(),
+        contacts: []
     });
 
-    if (!user || !user.contacts || user.contacts.length === 0) {
-        return res.json([]);
+    res.json({
+        userId: result.insertedId.toString(),
+        username
+    });
+});
+
+// ==========================
+// ✅ LOGIN
+app.post("/login", async (req, res) => {
+    const { username } = req.body;
+
+    const user = await db.collection("users").findOne({ username });
+    if (!user) return res.json({ error: "Utente non trovato" });
+
+    res.json({
+        userId: user._id.toString(),
+        username: user.username
+    });
+});
+
+// ==========================
+// ✅ ADD CONTACT
+app.post("/add-contact", async (req, res) => {
+
+    const { userId, username } = req.body;
+
+    const contact = await db.collection("users").findOne({ username });
+    if (!contact) return res.json({ error: "Utente non trovato" });
+
+    if (contact._id.toString() === userId) {
+        return res.json({ error: "Non puoi aggiungere te stesso" });
     }
 
+    const result = await db.collection("users").updateOne(
+        { _id: new ObjectId(userId) },
+        { $addToSet: { contacts: contact._id.toString() } }
+    );
+
+    if (result.modifiedCount === 0) {
+        return res.json({ error: "Contatto già presente" });
+    }
+
+    res.json({ success: true });
+});
+
+// ==========================
+// ✅ CONTACTS
+app.get("/contacts/:userId", async (req, res) => {
+
+    const user = await db.collection("users").findOne({
+        _id: new ObjectId(req.params.userId)
+    });
+
+    if (!user || !user.contacts.length) return res.json([]);
+
     const contacts = await db.collection("users")
-        .find({
-            _id: { $in: user.contacts.map(id => new ObjectId(id)) }
-        })
+        .find({ _id: { $in: user.contacts.map(id => new ObjectId(id)) } })
         .toArray();
 
     res.json(contacts.map(u => ({
@@ -189,34 +119,44 @@ app.get("/contacts/:userId", async (req, res) => {
 });
 
 // ==========================
-// ✅ CHAT WEBSOCKET (PRIVATE)
+// ✅ WEBSOCKET CHAT (FIXATO)
 const rooms = {};
 
 wss.on("connection", (ws) => {
+
+    console.log("🔌 WS CONNESSO");
 
     ws.on("message", (message) => {
 
         try {
             const data = JSON.parse(message.toString());
 
-            const roomId = [data.userId, data.otherUserId].sort().join("_");
+            const roomId = [data.userId, data.otherUserId]
+                .sort()
+                .join("_");
 
             // ✅ JOIN
             if (data.type === "JOIN") {
-
-                ws.room = roomId;
 
                 if (!rooms[roomId]) {
                     rooms[roomId] = new Set();
                 }
 
                 rooms[roomId].add(ws);
+                ws.room = roomId;
+
+                console.log("👥 JOIN:", roomId, "clients:", rooms[roomId].size);
             }
 
-            // ✅ MESSAGGI
+            // ✅ MESSAGE (FIX CRITICO)
             if (data.type === "MESSAGE") {
 
-                if (!rooms[roomId]) return;
+                if (!rooms[roomId]) {
+                    rooms[roomId] = new Set();
+                }
+
+                console.log("📩 MSG:", data.userId, "→", data.otherUserId);
+                console.log("👥 ROOM:", roomId, "clients:", rooms[roomId].size);
 
                 rooms[roomId].forEach(client => {
                     if (client.readyState === WebSocket.OPEN) {
@@ -230,13 +170,115 @@ wss.on("connection", (ws) => {
             }
 
         } catch (err) {
-            console.log("❌ ERRORE WS:", err.message);
+            console.log("❌ WS ERROR:", err.message);
         }
     });
 
     ws.on("close", () => {
         if (ws.room && rooms[ws.room]) {
             rooms[ws.room].delete(ws);
+            console.log("🔴 WS DISCONNESSO");
         }
     });
 });
+
+
+-------------------------------------------------
+
+package com.example.calculatorapp
+
+import android.os.Bundle
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import org.json.JSONObject
+import android.util.Log
+
+class ChatActivity : AppCompatActivity() {
+
+    private lateinit var listView: ListView
+    private lateinit var input: EditText
+    private lateinit var sendBtn: Button
+
+    private val messages = mutableListOf<String>()
+    private lateinit var adapter: ArrayAdapter<String>
+
+    private lateinit var userId: String
+    private lateinit var otherUserId: String
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        val layout = LinearLayout(this)
+        layout.orientation = LinearLayout.VERTICAL
+
+        listView = ListView(this)
+        input = EditText(this)
+        sendBtn = Button(this)
+        sendBtn.text = "Invia"
+
+        layout.addView(listView)
+        layout.addView(input)
+        layout.addView(sendBtn)
+
+        setContentView(layout)
+
+        adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, messages)
+        listView.adapter = adapter
+
+        val prefs = getSharedPreferences("chat_prefs", MODE_PRIVATE)
+        userId = prefs.getString("user_id", "") ?: ""
+        otherUserId = intent.getStringExtra("otherUserId") ?: ""
+
+        // ✅ JOIN SEMPRE
+        joinChat()
+
+        WebSocketManager.onMessageReceived = { text ->
+
+            Log.d("CHAT_MSG", text)
+
+            val json = JSONObject(text)
+            val msg = json.optString("msg", "")
+            val sender = json.optString("senderId", "")
+
+            if (msg.isNotEmpty()) {
+                runOnUiThread {
+                    if (sender == userId) {
+                        messages.add("ME: $msg")
+                    } else {
+                        messages.add("ALTRO: $msg")
+                    }
+                    adapter.notifyDataSetChanged()
+                }
+            }
+        }
+
+        sendBtn.setOnClickListener {
+
+            val msg = input.text.toString()
+            if (msg.isEmpty()) return@setOnClickListener
+
+            val json = JSONObject()
+            json.put("type", "MESSAGE")
+            json.put("userId", userId)
+            json.put("otherUserId", otherUserId)
+            json.put("msg", msg)
+
+            Log.d("SEND", json.toString())
+
+            WebSocketManager.sendMessage(json.toString())
+
+            input.setText("")
+        }
+    }
+
+    private fun joinChat() {
+        val json = JSONObject()
+        json.put("type", "JOIN")
+        json.put("userId", userId)
+        json.put("otherUserId", otherUserId)
+
+        Log.d("JOIN", json.toString())
+
+        WebSocketManager.sendMessage(json.toString())
+    }
+}
