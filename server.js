@@ -128,12 +128,64 @@ wss.on("connection", (ws) => {
 
     ws.on("message", (message) => {
 
+        console.log("📥 RAW:", message.toString());
+
         try {
             const data = JSON.parse(message.toString());
+
+            console.log("✅ DATA:", data);
 
             const roomId = [data.userId, data.otherUserId]
                 .sort()
                 .join("_");
+
+            if (data.type === "JOIN") {
+
+                if (!rooms[roomId]) {
+                    rooms[roomId] = new Set();
+                }
+
+                rooms[roomId].add(ws);
+                ws.room = roomId;
+
+                console.log("👥 JOIN:", roomId, "clients:", rooms[roomId].size);
+            }
+
+            if (data.type === "MESSAGE") {
+
+                console.log("📤 MSG:", data.msg);
+
+                if (!rooms[roomId]) {
+                    console.log("❌ ROOM NON ESISTE");
+                    return;
+                }
+
+                console.log("👥 CLIENTS:", rooms[roomId].size);
+
+                rooms[roomId].forEach(client => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({
+                            type: "MESSAGE",
+                            msg: data.msg,
+                            senderId: data.userId
+                        }));
+                    }
+                });
+            }
+
+        } catch (err) {
+            console.log("❌ WS ERROR:", err.message);
+        }
+    });
+
+    ws.on("close", () => {
+        console.log("🔴 WS CHIUSO");
+
+        if (ws.room && rooms[ws.room]) {
+            rooms[ws.room].delete(ws);
+        }
+    });
+});
 
             // ✅ JOIN
             if (data.type === "JOIN") {
